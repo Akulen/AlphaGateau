@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import jraph
 
-from spyder import GraphConvolution
+from jpyger import GraphConvolution
 
 class EGNN(nn.Module):
     out_dim: int = 128
