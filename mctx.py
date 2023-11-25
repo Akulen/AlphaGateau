@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import optax
 import pgx
 
-from spyder import state_to_graph
+from jpyger import state_to_graph
 from models import EdgeNet
 
 devices = jax.local_devices()
