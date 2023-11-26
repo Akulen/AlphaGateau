@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -32,7 +34,7 @@ class EdgeNet(nn.Module):
     n_eval_layers: int = 5
 
     @nn.compact
-    def __call__(self, graphs, training=False):
+    def __call__(self, graphs, training=False) -> Tuple[jnp.ndarray, jnp.ndarray]:
         graphs = graphs._replace(nodes=nn.Embed(num_embeddings=13, features=self.inner_size)(graphs.nodes))
 
         for _ in range(self.n_gnn_layers):
