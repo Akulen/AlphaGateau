@@ -1,5 +1,6 @@
-from typing import Tuple
+from typing import Callable, Tuple
 
+from rich.pretty import pprint
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -7,60 +8,224 @@ import jraph
 
 from jpyger import GraphConvolution
 
+def GCN(
+    update_node_fn: Callable[[jraph.NodeFeatures], jraph.NodeFeatures],
+    aggregate_nodes_fn: jraph.AggregateEdgesToNodesFn = jraph.segment_sum, # type: ignore
+    add_self_edges: bool = False,
+    symmetric_normalization: bool = True):
+    """Returns a method that applies a Graph Convolution layer.
+
+    Graph Convolutional layer as in https://arxiv.org/abs/1609.02907,
+
+    NOTE: This implementation does not add an activation after aggregation.
+    If you are stacking layers, you may want to add an activation between
+    each layer.
+
+    Args:
+        update_node_fn: function used to update the nodes. In the paper a single
+            layer MLP is used.
+        aggregate_nodes_fn: function used to aggregates the sender nodes.
+        add_self_edges: whether to add self edges to nodes in the graph as in the
+            paper definition of GCN. Defaults to False.
+        symmetric_normalization: whether to use symmetric normalization. Defaults
+            to True. Note that to replicate the fomula of the linked paper, the
+            adjacency matrix must be symmetric. If the adjacency matrix is not
+            symmetric the data is prenormalised by the sender degree matrix and post
+            normalised by the receiver degree matrix.
+
+    Returns:
+        A method that applies a Graph Convolution layer.
+    """
+    def _ApplyGCN(nodes, senders, receivers):
+        """Applies a Graph Convolution layer."""
+
+        # First pass nodes through the node updater.
+        nodes = update_node_fn(nodes)
+        # Equivalent to jnp.sum(n_node), but jittable
+        total_num_nodes = jax.tree_util.tree_leaves(nodes)[0].shape[0]
+        if add_self_edges:
+            # We add self edges to the senders and receivers so that each node
+            # includes itself in aggregation.
+            # In principle, a `GraphsTuple` should partition by n_edge, but in
+            # this case it is not required since a GCN is agnostic to whether
+            # the `GraphsTuple` is a batch of graphs or a single large graph.
+            conv_receivers = jnp.concatenate((receivers, jnp.arange(total_num_nodes)), axis=0)
+            conv_senders = jnp.concatenate((senders, jnp.arange(total_num_nodes)), axis=0)
+        else:
+            conv_senders = senders
+            conv_receivers = receivers
+
+        # pylint: disable=g-long-lambda
+        if symmetric_normalization:
+            # Calculate the normalization values.
+            count_edges = lambda x: jraph.segment_sum(
+                jnp.ones_like(conv_senders), x, total_num_nodes
+            )
+            sender_degree = count_edges(conv_senders)
+            receiver_degree = count_edges(conv_receivers)
+
+            # Pre normalize by sqrt sender degree.
+            # Avoid dividing by 0 by taking maximum of (degree, 1).
+            nodes = jax.tree_util.tree_map(
+                lambda x: x * jax.lax.rsqrt(jnp.maximum(sender_degree, 1.0))[:, None],
+                nodes,
+            )
+            # Aggregate the pre normalized nodes.
+            nodes = jax.tree_util.tree_map(
+                lambda x: aggregate_nodes_fn(x[conv_senders], conv_receivers, total_num_nodes),
+                nodes
+            )
+            # Post normalize by sqrt receiver degree.
+            # Avoid dividing by 0 by taking maximum of (degree, 1).
+            nodes = jax.tree_util.tree_map(
+                lambda x: (x * jax.lax.rsqrt(jnp.maximum(receiver_degree, 1.0))[:, None]),
+                nodes,
+            )
+        else:
+            nodes = jax.tree_util.tree_map(
+                lambda x: aggregate_nodes_fn(x[conv_senders], conv_receivers, total_num_nodes),
+                nodes
+            )
+        # pylint: enable=g-long-lambda
+        return nodes
+
+    return _ApplyGCN
+
 class EGNN(nn.Module):
     out_dim: int = 128
     @nn.compact
     def __call__(self, graph):
         x = jnp.concatenate([
-            GraphConvolution(nn.Dense(self.out_dim), add_self_edges=True)(graph).nodes,
-            GraphConvolution(nn.Dense(self.out_dim), add_self_edges=True)(graph._replace(
-                senders=graph.grid_senders,
-                receivers=graph.grid_receivers
-            )).nodes
+            GCN(nn.Dense(self.out_dim), add_self_edges=True)(graph.nodes, graph.senders, graph.receivers),
+            GCN(nn.Dense(self.out_dim), add_self_edges=True)(graph.nodes, graph.receivers, graph.senders),
+            GCN(nn.Dense(self.out_dim), add_self_edges=True)(graph.nodes, graph.grid_senders, graph.grid_receivers),
+            GCN(nn.Dense(self.out_dim), add_self_edges=True)(graph.nodes, graph.active_senders, graph.active_receivers),
+            GCN(nn.Dense(self.out_dim), add_self_edges=True)(graph.nodes, graph.passive_senders, graph.passive_receivers),
         ], axis=-1)
         x = jax.nn.relu(nn.Dense(self.out_dim)(x))
         return graph._replace(nodes=x)
 
+class EGNN2(nn.Module):
+    out_dim: int = 128
+    @nn.compact
+    def __call__(self, graph, training=False):
+        i = graph.nodes
+        x = nn.BatchNorm(momentum=0.9)(graph.nodes, use_running_average=not training)
+        x = jax.nn.relu(x)
+        x = jnp.concatenate([
+            GraphConvolution(nn.Dense(self.out_dim), add_self_edges=True)(graph).nodes,
+            GraphConvolution(nn.Dense(self.out_dim), add_self_edges=True)(graph._replace(
+                senders=graph.receivers,
+                receivers=graph.senders
+            )).nodes,
+            GraphConvolution(nn.Dense(self.out_dim), add_self_edges=True)(graph._replace(
+                senders=graph.grid_senders,
+                receivers=graph.grid_receivers
+            )).nodes,
+            GraphConvolution(nn.Dense(self.out_dim), add_self_edges=True)(graph._replace(
+                senders=graph.active_senders,
+                receivers=graph.active_receivers
+            )).nodes,
+            GraphConvolution(nn.Dense(self.out_dim), add_self_edges=True)(graph._replace(
+                senders=graph.passive_senders,
+                receivers=graph.passive_receivers
+            )).nodes,
+        ], axis=-1)
+        x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
+        x = jax.nn.relu(x)
+        x = nn.Dense(self.out_dim)(x)
+        return graph._replace(nodes=x+i)
+
 
 class NodeDot(nn.Module):
     @nn.compact
-    def __call__(self, x, senders, receivers):
+    def __call__(self, x, senders, receivers, _):
         return jnp.sum(x[senders] * x[receivers], axis=-1)
 
 
-class EdgeNet(nn.Module):
+class NodeDotV2(nn.Module):
     inner_size: int = 128
-    n_gnn_layers: int = 7
+
+    @nn.compact
+    def __call__(self, x, senders, receivers, edge_feature):
+        u, v = x[senders], x[receivers]
+        edge_embed = nn.Embed(num_embeddings=4, features=self.inner_size)(edge_feature)
+        return jnp.sum(nn.Dense(self.inner_size)(u) * nn.Dense(self.inner_size)(v) * edge_embed, axis=-1)
+
+
+class AttentionPooling(nn.Module):
+    @nn.compact
+    def __call__(self, x, segment_ids, mask, num_segments=None):
+        segment_ids_masked = jnp.where(mask, segment_ids, -1)
+        att = jraph.segment_softmax(nn.Dense(1)(x).squeeze(-1), segment_ids_masked, num_segments) # type: ignore
+        att = jnp.tile(att * mask, (x.shape[1], 1)).transpose()
+        return jraph.segment_sum(x * att, segment_ids, num_segments)
+
+
+class EdgeNet(nn.Module):
+    n_actions: int
+    inner_size: int = 128
+    n_gnn_layers: int = 8
     n_eval_layers: int = 5
+    dot_v2: bool = True
+    use_embedding: bool = True
+    attention_pooling: bool = True
 
     @nn.compact
     def __call__(self, graphs, training=False) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        graphs = graphs._replace(nodes=nn.Embed(num_embeddings=13, features=self.inner_size)(graphs.nodes))
+        if self.use_embedding:
+            graphs = graphs._replace(nodes=nn.Embed(num_embeddings=13, features=self.inner_size)(graphs.nodes.reshape((-1))))
 
         for _ in range(self.n_gnn_layers):
-            graphs = EGNN(out_dim=self.inner_size)(graphs)
+            graphs = EGNN2(out_dim=self.inner_size)(graphs, training=training)
 
-        logits = nn.Dense(self.inner_size)(graphs.nodes)
-        logits = NodeDot()(logits, graphs.senders, graphs.receivers)
+        x = nn.BatchNorm(momentum=0.9)(graphs.nodes, use_running_average=not training)
+        x = jax.nn.relu(x)
+
+        node_logits = nn.Dense(self.inner_size)(x)
+        node_logits = nn.BatchNorm(momentum=0.9)(node_logits, use_running_average=not training)
+        node_logits = nn.relu(node_logits)
+        # node_logits = nn.Dense(self.inner_size)(node_logits)
+        dot = NodeDotV2(self.inner_size) if self.dot_v2 else NodeDot()
+        logits = dot(node_logits, graphs.senders, graphs.receivers, graphs.edges)
+        logits = logits.reshape((graphs.edges_actions.shape[0], -1))
+        logits = jax.vmap(
+            lambda a, ind, x: a.at[ind].set(x)
+        )(logits.min() * jnp.ones((graphs.edges_actions.shape[0], self.n_actions)), graphs.edges_actions, logits)
+
+        # global_logits = nn.Dense(graphs.senders.shape[-1])(node_logits)
+        # logits = jnp.concatenate([edge_logits, global_logits], axis=-1)
+        # logits = nn.BatchNorm(momentum=0.9)(logits, use_running_average=not training)
+        # logits = nn.relu(logits)
+        # logits = nn.Dense(graphs.senders.shape[-1])(logits)
 
         n_partitions = len(graphs.n_node)
         segment_ids = jnp.repeat(
             jnp.arange(n_partitions),
             graphs.n_node,
             axis=0,
-            total_repeat_length=graphs.nodes.shape[0]
+            total_repeat_length=x.shape[0]
         )
         node_mask = jnp.where(
-            jnp.arange(graphs.nodes.shape[0]) % graphs.n_node[0] == 0,
+            jnp.arange(x.shape[0]) % graphs.n_node[0] == 0,
             jnp.int32(0),
             jnp.int32(1)
         )
-        x = graphs.nodes * jnp.tile(node_mask, (self.inner_size, 1)).transpose()
-        v = jraph.segment_sum(x, segment_ids, graphs.n_node.shape[0])
-        v /= jnp.tile(graphs.n_node - 1, (self.inner_size, 1)).transpose()
-        for _ in range(self.n_eval_layers):
-            v = nn.relu(nn.Dense(self.inner_size)(v))
-        v = nn.tanh(nn.Dense(1)(v))
+        v = nn.Dense(self.inner_size)(x)
+        v = nn.BatchNorm(momentum=0.9)(v, use_running_average=not training)
+        v = jax.nn.relu(v)
+        if self.attention_pooling:
+            v = AttentionPooling()(v, segment_ids, node_mask, graphs.n_node.shape[0])
+        else:
+            # Mean Pooling
+            v = v * jnp.tile(node_mask, (self.inner_size, 1)).transpose()
+            v = jraph.segment_sum(v, segment_ids, graphs.n_node.shape[0])
+            v /= jnp.tile(graphs.n_node - 1, (self.inner_size, 1)).transpose()
+        v = jax.nn.relu(v) # Probably useless after attention pooling
+        # for _ in range(self.n_eval_layers):
+        #     v = nn.relu(nn.Dense(self.inner_size)(v))
+        v = nn.Dense(1)(v)
+        v = nn.tanh(v)
 
         return logits, v
 
@@ -90,3 +255,86 @@ class EdgeNet(nn.Module):
 
         # return self.evaluation_output(x_eval).squeeze(dim=-1), policy
         # raise NotImplementedError
+
+
+class BlockV1(nn.Module):
+    num_channels: int
+    name: str = "BlockV1"
+
+    @nn.compact
+    def __call__(self, x, training):
+        i = x
+        x = nn.Conv(self.num_channels, kernel_size=(3, 3))(x)
+        x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
+        x = jax.nn.relu(x)
+        x = nn.Conv(self.num_channels, kernel_size=(3, 3))(x)
+        x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
+        return jax.nn.relu(x + i)
+
+
+class BlockV2(nn.Module):
+    num_channels: int
+    name: str = "BlockV2"
+
+    @nn.compact
+    def __call__(self, x, training):
+        i = x
+        x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
+        x = jax.nn.relu(x)
+        x = nn.Conv(self.num_channels, kernel_size=(3, 3))(x)
+        x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
+        x = jax.nn.relu(x)
+        x = nn.Conv(self.num_channels, kernel_size=(3, 3))(x)
+        return x + i
+
+
+class AZNet(nn.Module):
+    """AlphaZero NN architecture."""
+    num_actions: int
+    num_channels: int = 64
+    num_blocks: int = 5
+    resnet_v2: bool = True
+    resnet_cls = BlockV2
+    name: str = "az_net"
+
+
+    @nn.compact
+    def __call__(self, x, training=False):
+        # if self.resnet_cls is None:
+        #     self.resnet_cls = BlockV2 if self.resnet_v2 else BlockV1
+
+        x = x.astype(jnp.float32)
+        x = nn.Conv(self.num_channels, kernel_size=(3, 3))(x)
+
+        if not self.resnet_v2:
+            x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
+            x = jax.nn.relu(x)
+
+        for i in range(self.num_blocks):
+            x = self.resnet_cls(num_channels=self.num_channels, name=f"block_{i}")(
+                x, training
+            )
+
+        if self.resnet_v2:
+            x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
+            x = jax.nn.relu(x)
+
+        # policy head
+        logits = nn.Conv(features=2, kernel_size=(1, 1))(x)
+        logits = nn.BatchNorm(momentum=0.9)(logits, use_running_average=not training)
+        logits = jax.nn.relu(logits)
+        logits = logits.reshape((logits.shape[0], -1))
+        logits = nn.Dense(self.num_actions)(logits)
+
+        # value head
+        v = nn.Conv(features=1, kernel_size=(1, 1))(x)
+        v = nn.BatchNorm(momentum=0.9)(v, use_running_average=not training)
+        v = jax.nn.relu(v)
+        v = v.reshape((v.shape[0], -1))
+        v = nn.Dense(self.num_channels)(v)
+        v = jax.nn.relu(v)
+        v = nn.Dense(1)(v)
+        v = jnp.tanh(v)
+        v = v.reshape((-1,))
+
+        return logits, v
