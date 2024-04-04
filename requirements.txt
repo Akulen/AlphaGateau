@@ -36,7 +36,7 @@ jaxlib==0.4.20+cuda12.cudnn89
 jedi==0.19.1
 Jinja2==3.1.2
 jmp==0.0.4
-jpyger @ file:///home/akulen/KyoDai/packages/JpyGer
+jpyger @ file:///home/trigaux/packages/JpyGer
 jraph==0.0.6.dev0
 Mako==1.3.0
 markdown-it-py==3.0.0

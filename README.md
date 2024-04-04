@@ -22,5 +22,5 @@ pip install -r requirements.txt
 ## Step 2: Run the example
 
 ```bash
-python mctx.py
+python train.py
 ```
