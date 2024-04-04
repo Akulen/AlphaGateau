@@ -3,3 +3,6 @@ venv*
 baselines
 .aim
 logs
+*.backup.py
+notebooks/.ipynb_checkpoints/
+*.prof
