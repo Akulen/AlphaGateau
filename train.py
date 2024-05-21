@@ -34,27 +34,50 @@ def reduce_multiple(n, m):
     return int(n / m) * m
 
 config = {
-    'gardner': True,
-    'use_gnn': True,
-    'n_gnn_layers': 6, # 5,
-    'new_graph': True,
-    'mix_edge_node': True,
     'add_features': True,
-    'use_embedding': True,
     'attention_pooling': True,
-    'inner_size': 128,
-    'n_iter': 100,
-    'eval_interval': 5,
-    'eval_batch_size': 128, #, # 1024,
-    'selfplay_batch_size': 1024, # 256, # 1024,
-    'training_batch_size': 2**7, # 4 096
-    'window_size': 2_000_000,
-    'n_training_pass': 1,
-    'max_num_steps': 256,
-    'num_simulations': 128,
-    'learning_rate': 0.001,
     'dotv2': True,
+    'eval_batch_size': 128, #, # 1024,
+    'eval_interval': 2,
+    'gardner': False,
+    'inner_size': 128,
+    'learning_rate': 0.001,
+    'max_num_steps': 256,
+    'mix_edge_node': True,
+    'n_gnn_layers': 5,
+    'n_iter': 100,
+    'n_training_pass': 1,
+    'new_graph': True,
+    'num_simulations': 128,
+    'self_edges': True,
+    'selfplay_batch_size': 256, # 1024,
+    'simple_update': False,
+    'training_batch_size': 2**8, # 2**10, # 4 096
+    'use_embedding': True,
+    'use_gnn': True,
+    'window_size': 1_000_000,
 }
+# config = {
+#     'gardner': False,
+#     'use_gnn': False,
+#     'n_res_layers': 5,
+#     # 'new_graph': True,
+#     # 'mix_edge_node': True,
+#     # 'add_features': True,
+#     # 'use_embedding': True,
+#     # 'attention_pooling': True,
+#     'inner_size': 128,
+#     'n_iter': 100,
+#     'eval_interval': 5,
+#     'eval_batch_size': 128, #, # 1024,
+#     'selfplay_batch_size': 256, # 1024,
+#     'training_batch_size': 2**8, # 2**7, # 2**10, # 4 096
+#     'window_size': 1_000_000,
+#     'n_training_pass': 1,
+#     'max_num_steps': 256,
+#     'num_simulations': 128,
+#     'learning_rate': 0.001,
+# }
 if config['use_gnn'] == False:
     config['use_embedding'] = False
 if config['gardner']:
@@ -72,7 +95,7 @@ config['selfplay_batch_size'] = reduce_multiple(
     (num_devices * config['training_batch_size']) // config['max_num_steps']
 )
 config['window_size'] = reduce_multiple(
-    config['window_size'],
+    max(config['window_size'], config['selfplay_batch_size'] * config['max_num_steps']),
     config['training_batch_size'] * num_devices
 )
 
@@ -243,21 +266,22 @@ class Sample(NamedTuple):
 
 @jax.pmap
 def compute_loss_input(data: mcts.PlyOutput) -> Sample:
-    batch_size = config['selfplay_batch_size'] // num_devices
+    # batch_size = config['selfplay_batch_size'] // num_devices
+    batch_size = data.obs.shape[1]
     # If episode is truncated, there is no value target
     # So when we compute value loss, we need to mask it
     value_mask = jnp.cumsum(data.terminated[::-1, :], axis=0)[::-1, :] >= 1
 
     # Compute value target
     def body_fn(carry, i):
-        ix = config['max_num_steps'] - i - 1
+        ix = data.obs.shape[0] - i - 1
         v = data.reward[ix] + data.discount[ix] * carry
         return v, v
 
     _, value_tgt = jax.lax.scan(
         body_fn,
         jnp.zeros(batch_size),
-        jnp.arange(config['max_num_steps']),
+        jnp.arange(data.obs.shape[0]),
     )
     value_tgt = value_tgt[::-1, :]
 
@@ -303,7 +327,7 @@ def loss_fn(
     value_loss = optax.l2_loss(value, samples.value_tgt)
     # mask if the episode is truncated
     value_loss = jnp.mean(value_loss * samples.mask)
-    value_loss = jnp.sqrt(value_loss)
+    # value_loss = jnp.sqrt(value_loss)
 
     return policy_loss + value_loss, (batch_stats, policy_loss_norm, value_loss)
 
@@ -450,7 +474,7 @@ def main():
 
     run = None
     run_name = "EdgeNet" if config['use_gnn'] else "AZNet"
-    if config['new_graph']:
+    if config['use_gnn'] and config['new_graph']:
         run_name += "2"
     if not debug:
         run = Run(
@@ -467,11 +491,13 @@ def main():
         if config['new_graph']:
             model = EdgeNet2(
                 n_actions=env.num_actions,
-                n_gnn_layers=config['n_gnn_layers'],
+                n_res_layers=config['n_gnn_layers'],
                 inner_size=config['inner_size'],
                 attention_pooling=config['attention_pooling'],
                 mix_edge_node=config['mix_edge_node'],
                 add_features=config['add_features'],
+                self_edges=config['self_edges'],
+                simple_update=config['simple_update'],
             )
         else:
             model = EdgeNet(
@@ -483,16 +509,16 @@ def main():
             )
     else:
         model = AZNet(
-            num_actions=env.num_actions,
-            num_channels=config['inner_size'],
-            num_blocks=6,
+            n_actions=env.num_actions,
+            inner_size=config['inner_size'],
+            n_res_layers=config['n_res_layers'],
         )
     model = ModelManager(
         id=f"{run_name}",
         model=model,
         use_embedding=config['use_embedding'],
         use_graph=config['use_gnn'],
-        new_graph=config['new_graph'],
+        new_graph=config.get('new_graph', None),
     )
 
     dummy_state = init_fn(jax.random.split(jax.random.PRNGKey(0), 2))
@@ -504,6 +530,40 @@ def main():
     config['param_count'] = param_count
     config['baseline'] = baseline_name
 
+    if False: # Save the model architecture graph
+        f = partial(model.__call__,
+            legal_action_mask=dummy_state.legal_action_mask,
+            params={'params': params, 'batch_stats': batch_stats},
+            training=False
+        )
+        z=jax.xla_computation(f)(x)
+
+        with open("t1.dot", "w") as ff:
+            ff.write(z.as_hlo_dot_graph())
+
+        from jax._src import api
+        model_graph = api.jit(f).lower(x).compiler_ir(dialect="hlo").as_hlo_dot_graph()
+
+        with open("t2.dot", "w") as f:
+            f.write(model_graph)
+        import sys
+        sys.exit()
+
+    now = time.strftime("%Y-%m-%d:%Hh%M")
+    models_dir = os.path.join("models", f"{env_id}_{now}")
+    os.makedirs(models_dir, exist_ok=True)
+    games_dir = os.path.join("games", f"{env_id}_{now}")
+    os.makedirs(games_dir, exist_ok=True)
+
+    rng_key = jax.random.PRNGKey(42)
+    if False:
+        pre_train_it = 79
+        pre_train_name = f"gardner_chess_2024-04-22:18h50/{pre_train_it:06}"
+        config['continue'] = pre_train_name
+        with open(f"./models/{pre_train_name}.ckpt", "rb") as f:
+            dic = pickle.load(f)
+            params, batch_stats = dic['params'], dic['batch_stats']
+
     if run is not None:
         run["hparams"] = config
 
@@ -513,11 +573,43 @@ def main():
         devices
     )
 
-    now = time.strftime("%Y-%m-%d:%Hh%M")
-    models_dir = os.path.join("models", f"{env_id}_{now}")
-    os.makedirs(models_dir, exist_ok=True)
-    games_dir = os.path.join("games", f"{env_id}_{now}")
-    os.makedirs(games_dir, exist_ok=True)
+    if 'continue' in config:
+        if run is not None:
+            # Evaluation
+            rng_key, subkey = jax.random.split(rng_key)
+            R, avg_R, win_rate, draw_rate, lose_rate = evaluate(
+                subkey,
+                model,
+                {'params': params, 'batch_stats': batch_stats},
+                n_games=config['eval_batch_size'],
+                max_plies=config['max_num_steps'],
+                n_sim=config['num_simulations'],
+                save_n_games=config['eval_batch_size'],
+                games_file=os.path.join(
+                    games_dir,
+                    f'init.pgn'
+                ),
+                round_name='init'
+            )
+            run.track(
+                {
+                    "elo_rating": elo_from_results(
+                        avg_R,
+                        base=1000,
+                        max_delta=1000
+                    ),
+                    "avg_R": avg_R,
+                    "win_rate": win_rate,
+                    "draw_rate": draw_rate,
+                    "lose_rate": lose_rate,
+                },
+                context={
+                    'subset': 'eval',
+                    'tag': 'eval/vs_baseline',
+                },
+                step=-1,
+                epoch=-1
+            )
 
     frames = 0
     hours = {
@@ -527,7 +619,6 @@ def main():
     }
     sample_window = None
 
-    rng_key = jax.random.PRNGKey(42)
     with rp.Progress(
         *rp.Progress.get_default_columns(),
         rp.TimeElapsedColumn(),
