@@ -16,6 +16,11 @@ def _state_nodes(observation: jnp.ndarray) -> Tuple[int, jnp.ndarray]:
     # features = observation.reshape((n_row * n_col, -1))
     # cell order is the same as pgc.Action._from_label
     features = jnp.rot90(observation, k=-1).reshape((n_row * n_col, -1))
+    if features.shape[-1] == 115: # Add dummy features for 8x8 compatibility
+        zeros = jnp.zeros(features.shape[:-1] + (119,))
+        zeros = zeros.at[:,:114].set(features[:,:114])
+        features = zeros.at[:,118].set(features[:,114])
+    assert(features.shape[-1] == 119)
     return n_row * n_col, features
 
 def _state_edges( # TODO: add self-edge
@@ -146,7 +151,7 @@ def state_to_graph(
     )
 
 def main():
-    env = pgx.make("chess")
+    env = pgx.make("gardner_chess")
     state = env.init(jax.random.PRNGKey(0))
     state = jax.tree_map(lambda x: x[None], state)
 
@@ -155,6 +160,7 @@ def main():
     # pprint(x.n_node)
     # pprint(x.nodes.shape)
     # pprint(np.array(list(" PNBRQKpnbrqk"))[jnp.rot90((x.nodes[1:,:12] * jnp.arange(1, 13)).sum(axis=-1).reshape((-1,8,8)), axes=(1,2)).astype(jnp.int32)])
+    pprint(x.nodes.shape)
     print('   l Δx Δy pq pr pb pn  p  n  b  r  q  k  P  N  B  R  Q  K ')
     print(x.edges[jnp.where(state.legal_action_mask.reshape((-1,)))])
     pprint(jnp.where(state.legal_action_mask.reshape((-1,))))
