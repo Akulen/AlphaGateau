@@ -1,3 +1,4 @@
+import pickle
 from typing import cast, overload, Callable, Literal, Mapping, NamedTuple, Tuple
 from functools import partial
 
@@ -6,6 +7,7 @@ from rich.pretty import pprint
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from pgx import Env
 import jraph
 
 from jpyger import GraphConvolution, state_to_graph
@@ -186,21 +188,23 @@ class AttentionPooling(nn.Module):
 class EdgeNet(nn.Module):
     n_actions: int
     inner_size: int = 128
-    n_gnn_layers: int = 8
+    n_res_layers: int = 8
     n_eval_layers: int = 5
     dot_v2: bool = True
     use_embedding: bool = True
     attention_pooling: bool = True
-
+    # Useless parameters
     mix_edge_node: bool = False
     add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
 
     @nn.compact
     def __call__(self, *args, graphs, training=False, **kwargs) -> Tuple[jnp.ndarray, jnp.ndarray]:
         if self.use_embedding:
             graphs = graphs._replace(nodes=nn.Embed(num_embeddings=13, features=self.inner_size)(graphs.nodes.reshape((-1)).astype(jnp.int32)))
 
-        for _ in range(self.n_gnn_layers):
+        for _ in range(self.n_res_layers):
             graphs = EGNN2(out_dim=self.inner_size)(graph=graphs, training=training)
 
         x = nn.BatchNorm(momentum=0.9)(graphs.nodes, use_running_average=not training)
@@ -301,6 +305,8 @@ class GATEAU(nn.Module):
     out_dim: int = 128
     mix_edge_node: bool = False
     add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
     @nn.compact
     def __call__(
         self,
@@ -317,10 +323,17 @@ class GATEAU(nn.Module):
         edge_features = cast(jnp.ndarray, graph.edges)
 
         sent_attributes_1 = nn.Dense(self.out_dim)(node_features)[graph.senders]
-        sent_attributes_2 = node_features[graph.senders]
+        if self.simple_update:
+            sent_attributes_2 = node_features[graph.senders]
+        else:
+            sent_attributes_2 = nn.Dense(self.out_dim)(node_features)[graph.senders]
         received_attributes = nn.Dense(self.out_dim)(
             node_features
         )[graph.receivers]
+        if self.simple_update:
+            edge_features_0 = None
+        else:
+            edge_features_0 = nn.Dense(self.out_dim)(edge_features)
         edge_features = nn.Dense(self.out_dim)(edge_features)
 
         if self.add_features:
@@ -346,18 +359,25 @@ class GATEAU(nn.Module):
 
         if self.mix_edge_node:
             if self.add_features:
-                message = sent_attributes_2 + edge_features
+                message = sent_attributes_2 + (
+                    edge_features if self.simple_update else edge_features_0
+                )
             else:
-                message = sent_attributes_2 * edge_features
+                message = sent_attributes_2 * (
+                    edge_features if self.simple_update else edge_features_0
+                )
         else:
             message = sent_attributes_2
-        message = nn.Dense(self.out_dim)(message)
+        if self.simple_update:
+            message = nn.Dense(self.out_dim)(message)
         message = attention_weights * message
         node_features = jraph.segment_sum(
             message,
             segment_ids=cast(jnp.ndarray, graph.receivers),
             num_segments=sum_n_node
         )
+        if self.self_edges:
+            node_features += nn.Dense(self.out_dim)(graph.nodes)
 
         return graph._replace(
             nodes=node_features,
@@ -369,6 +389,8 @@ class EGNN3(nn.Module):
     out_dim: int = 128
     mix_edge_node: bool = False
     add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
     @nn.compact
     def __call__(
         self,
@@ -381,7 +403,9 @@ class EGNN3(nn.Module):
         graph = GATEAU(
             out_dim=self.out_dim,
             mix_edge_node=self.mix_edge_node,
-            add_features=self.add_features
+            add_features=self.add_features,
+            self_edges=self.self_edges,
+            simple_update=self.simple_update
         )(
             graph=graph._replace(
                 nodes=BNR()(x=graph.nodes, training=training),
@@ -391,7 +415,9 @@ class EGNN3(nn.Module):
         graph = GATEAU(
             out_dim=self.out_dim,
             mix_edge_node=self.mix_edge_node,
-            add_features=self.add_features
+            add_features=self.add_features,
+            self_edges=self.self_edges,
+            simple_update=self.simple_update
         )(
             graph=graph._replace(
                 nodes=BNR()(x=graph.nodes, training=training),
@@ -404,10 +430,12 @@ class EGNN3(nn.Module):
 class EdgeNet2(nn.Module):
     n_actions: int
     inner_size: int = 128
-    n_gnn_layers: int = 5
+    n_res_layers: int = 5
     attention_pooling: bool = True
     mix_edge_node: bool = False
     add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
 
     dot_v2: bool = True
     use_embedding: bool = True
@@ -426,11 +454,13 @@ class EdgeNet2(nn.Module):
             edges=nn.Dense(self.inner_size)(graphs.edges)
         )
 
-        for _ in range(self.n_gnn_layers):
+        for _ in range(self.n_res_layers):
             graphs = EGNN3(
                 out_dim=self.inner_size,
                 mix_edge_node=self.mix_edge_node,
-                add_features=self.add_features
+                add_features=self.add_features,
+                self_edges=self.self_edges,
+                simple_update=self.simple_update
             )(
                 graph=graphs,
                 training=training
@@ -458,6 +488,7 @@ class EdgeNet2(nn.Module):
             axis=0,
             total_repeat_length=x.shape[0]
         )
+        # v = BNR()(x=x, training=training)
         v = nn.Dense(self.inner_size)(x)
         v = nn.BatchNorm(momentum=0.9)(v, use_running_average=not training)
         v = jax.nn.relu(v)
@@ -514,12 +545,20 @@ class BlockV2(nn.Module):
 
 class AZNet(nn.Module):
     """AlphaZero NN architecture."""
-    num_actions: int
-    num_channels: int = 64
-    num_blocks: int = 5
+    n_actions: int
+    inner_size: int = 64
+    n_res_layers: int = 5 # num_blocks
     resnet_v2: bool = True
     resnet_cls = BlockV2
     name: str | None = "az_net"
+    # Useless parameters
+    dot_v2: bool = True
+    use_embedding: bool = True
+    attention_pooling: bool = True
+    mix_edge_node: bool = False
+    add_features: bool = True
+    self_edges: bool = False
+    simple_update: bool = True
 
 
     @nn.compact
@@ -528,14 +567,14 @@ class AZNet(nn.Module):
         #     self.resnet_cls = BlockV2 if self.resnet_v2 else BlockV1
 
         x = x.astype(jnp.float32)
-        x = nn.Conv(self.num_channels, kernel_size=(3, 3))(x)
+        x = nn.Conv(self.inner_size, kernel_size=(3, 3))(x)
 
         if not self.resnet_v2:
             x = nn.BatchNorm(momentum=0.9)(x, use_running_average=not training)
             x = jax.nn.relu(x)
 
-        for i in range(self.num_blocks):
-            x = self.resnet_cls(num_channels=self.num_channels, name=f"block_{i}")(
+        for i in range(self.n_res_layers):
+            x = self.resnet_cls(num_channels=self.inner_size, name=f"block_{i}")(
                 x=x, training=training
             )
 
@@ -548,14 +587,14 @@ class AZNet(nn.Module):
         logits = nn.BatchNorm(momentum=0.9)(logits, use_running_average=not training)
         logits = jax.nn.relu(logits)
         logits = logits.reshape((logits.shape[0], -1))
-        logits = nn.Dense(self.num_actions)(logits)
+        logits = nn.Dense(self.n_actions)(logits)
 
         # value head
         v = nn.Conv(features=1, kernel_size=(1, 1))(x)
         v = nn.BatchNorm(momentum=0.9)(v, use_running_average=not training)
         v = jax.nn.relu(v)
         v = v.reshape((v.shape[0], -1))
-        v = nn.Dense(self.num_channels)(v)
+        v = nn.Dense(self.inner_size)(v)
         v = jax.nn.relu(v)
         v = nn.Dense(1)(v)
         v = jnp.tanh(v)
@@ -653,3 +692,41 @@ class ModelManager(NamedTuple):
                 use_embedding=self.use_embedding
             )
         return state.observation if state is not None else observation
+
+def load_model(
+    env: Env,
+    file_name: str,
+    model_name: str,
+):
+    with open(file_name, "rb") as f:
+        dic = pickle.load(f)
+        net = AZNet
+        if dic['config']['use_gnn']:
+            if dic['config'].get('new_graph', False):
+                net = EdgeNet2
+            else:
+                net = EdgeNet
+        model = ModelManager(
+            id=model_name,
+            model=net(
+                n_actions=env.num_actions,
+                inner_size=dic['config']['inner_size'],
+                n_res_layers=dic['config'].get('n_gnn_layers', 5),
+                dot_v2=dic['config'].get('dotv2', True),
+                use_embedding=dic['config']['use_embedding'],
+                attention_pooling=dic['config'].get('attention_pooling', True),
+                mix_edge_node=dic['config'].get('mix_edge_node', False),
+                add_features=dic['config'].get('add_features', True),
+                self_edges=dic['config'].get('self_edges', False),
+                simple_update=dic['config'].get('simple_update', True)
+            ),
+            use_embedding=dic['config']['use_embedding'],
+            use_graph=dic['config']['use_gnn'],
+            new_graph=dic['config'].get('new_graph', False),
+        )
+        model_params = {
+            'params': dic['params'],
+            'batch_stats': dic['batch_stats']
+        }
+    return model, model_params
+
