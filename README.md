@@ -21,6 +21,19 @@ pip install -r requirements.txt
 
 ## Step 2: Run the example
 
+Running
+
 ```bash
 python train.py
 ```
+
+will start to train a full model. The run can be configured by editing the
+`config` dictionary in `train.py`.
+
+```bash
+python ranking.py
+```
+
+will select 5 opponents for each players defined in lines 216-218, and run
+matches. The outcomes of those matches are saved in `rankings.json`, and
+estimated ELO ratings are evaluated and stored for each player.
