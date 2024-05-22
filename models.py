@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from pgx import Env
 import jraph
 
-from jpyger import GraphConvolution, state_to_graph
+# from jpyger import GraphConvolution, state_to_graph
 import chess_graph as cg
 
 
@@ -603,7 +603,7 @@ class AZNet(nn.Module):
         return logits, v
 
 
-state_to_graph = jax.jit(state_to_graph, static_argnames='use_embedding')
+# state_to_graph = jax.jit(state_to_graph, static_argnames='use_embedding')
 new_state_to_graph = jax.jit(cg.state_to_graph)
 class ModelManager(NamedTuple):
     id: str
