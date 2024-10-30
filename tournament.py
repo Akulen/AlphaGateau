@@ -39,6 +39,7 @@ def load_model(
             model=net(
                 n_actions=env.num_actions,
                 inner_size=dic['config']['inner_size'],
+                n_gnn_layers=dic['config'].get('n_gnn_layers', 5),
                 dot_v2=dic['config']['dotv2'],
                 use_embedding=dic['config']['use_embedding'],
                 attention_pooling=dic['config']['attention_pooling'],
@@ -59,12 +60,15 @@ def main():
     env_id = "chess"
     env = pgx.make(env_id)
 
-    run1 = "chess_2024-02-05:14h08/"
-    run2 = "chess_2024-03-17:13h50/"
+    run1 = "chess_2024-03-25:18h42"
+    run2 = "chess_2024-04-06:22h14"
+
     games_dir = f"./tournaments/{run1} vs {run2}"
+    # games_dir = f"./tournaments/{run1}"
     os.makedirs(games_dir, exist_ok=True)
 
-    iterations = list(range(50, 401, 50))
+    iterations = list(range(59, 100, 10))
+    # iterations = list(range(50, 401, 50))
     # iterations = list(range(300, 401, 5))
     # iterations = [375, 395]
     # iterations = [50]
@@ -73,16 +77,17 @@ def main():
     for it in iterations:
         models[it], models_params[it] = load_model(
             env,
-            f"./models/{run1}{it:06}.ckpt",
-            f"EdgeNet{it:03}"
+            f"./models/{run1}/{it:06}.ckpt",
+            f"EdgeNet2-{run1}-{it:03}",
+            EdgeNet2
         )
 
-    iterations = list(range(4, 101, 10))
+    iterations = list(range(1, 20, 2))
     for it in iterations:
         models[f"test{it:03d}"], models_params[f"test{it:03d}"] = load_model(
             env,
             f"./models/{run2}/{it:06}.ckpt",
-            f"EdgeNet2-{it:03}",
+            f"EdgeNet2-{run2}-{it:03}",
             EdgeNet2
         )
 

@@ -1,14 +1,16 @@
 import datetime
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import NamedTuple, List, Literal, Optional, Union
 from types import ModuleType
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from pgx import State
 from pgx._src.visualizer import global_config, Visualizer
 import svgwrite
 import svgwrite.container
+import rich.progress as rp
 
 def save_svg_animation(
     states: State,
@@ -190,3 +192,13 @@ def to_pgn(
        if t == 0
     ])
     return game
+
+
+class Sample(NamedTuple):
+    board: jnp.ndarray
+    obs: jnp.ndarray
+    # board_or_obs: jnp.ndarray
+    lam: jnp.ndarray
+    policy_tgt: jnp.ndarray
+    value_tgt: jnp.ndarray
+    mask: jnp.ndarray

@@ -1,0 +1,219 @@
+{
+    "chess_2024-04-28:21h03": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "fine-tuned 8 layers",
+        "GPUS": 8
+    },
+    "chess_2024-04-06:22h14": {
+        "start": 1,
+        "end": 20,
+        "step": 2,
+        "label": "fine-tuned 6 layers",
+        "GPUS": 8
+    },
+    "chess_2024-03-25:18h42": {
+        "start": 9,
+        "end": 100,
+        "step": 10,
+        "label": "base 5 layers",
+        "GPUS": 8
+    },
+    "chess_2024-04-18:17h03": {
+        "start": 4,
+        "end": 100,
+        "step": 5,
+        "label": "AlphaZero 5 layers",
+        "GPUS": 8
+    },
+    "chess_2024-05-08:14h24": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "sparse 5 layers",
+        "GPUS": 8
+    },
+    "chess_2024-05-10:15h27": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "dense 5 layers",
+        "GPUS": 8
+    },
+    "gardner_chess_2024-04-04:17h15": {
+        "start": 9,
+        "end": 100,
+        "step": 10,
+        "label": "gardner",
+        "GPUS": 8
+    },
+    "chess_2024-05-20:14h19": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers",
+        "GPUS": 8
+    },
+    "chess_2024-05-23:15h15": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers cfw",
+        "GPUS": 8
+    },
+    "chess_2024-05-26:16h55": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers cfw no-se",
+        "GPUS": 8
+    },
+    "chess_2024-05-29:15h25": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers cfw no-se su",
+        "GPUS": 8
+    },
+    "chess_2024-06-01:20h10": {
+        "start": 1,
+        "end": 60,
+        "step": 2,
+        "label": "AlphaGateau 5 layers no-se su",
+        "GPUS": 8
+    },
+    "chess_2024-06-03:17h30": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers no-se gp",
+        "GPUS": 8
+    },
+    "chess_2024-06-06:12h10": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers gp",
+        "GPUS": 8
+    },
+    "chess_2024-06-09:09h59": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers gp no-fw",
+        "GPUS": 8
+    },
+    "chess_2024-06-11:16h31": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers gp no-se no-fw",
+        "GPUS": 8
+    },
+    "chess_2024-06-13:21h49": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 5 layers gp no-se no-fwx4",
+        "GPUS": 8
+    },
+    "gardner_chess_2024-06-23:10h22": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 8 layers gardner 512",
+        "GPUS": 8
+    },
+    "gardner_chess_2024-06-26:17h38": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 8 layers gardner 1024 (base)",
+        "GPUS": 8
+    },
+    "chess_2024-06-28:23h13": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 8 layers 256 fine tuned",
+        "GPUS": 8
+    },
+    "chess_2024-07-02:15h33": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 8 layers 1024 fine tuned",
+        "GPUS": 8
+    },
+    "chess_2024-07-14:09h50": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 8 layers 256 fine tuned 512 sim",
+        "GPUS": 8
+    },
+    "chess_2024-07-22:16h19": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 8 layers 1024 fine tuned 32 sim",
+        "GPUS": 8
+    },
+    "chess_2024-08-01:02h18": {
+        "start": 1,
+        "end": 400,
+        "step": 2,
+        "label": "AlphaZero 5 layers iterations 101-400",
+        "GPUS": 8
+    },
+    "chess_2024-08-20:00h13": {
+        "start": 1,
+        "end": 500,
+        "step": 2,
+        "label": "AlphaGateau 5 layers 500 iterations",
+        "GPUS": 8
+    },
+    "chess_2024-09-03:16h28": {
+        "start": 1,
+        "end": 500,
+        "step": 2,
+        "label": "AlphaZero 5 layers 500 iterations bugged",
+        "GPUS": 8
+    },
+    "chess_2024-09-09:16h58": {
+        "start": 1,
+        "end": 500,
+        "step": 2,
+        "label": "AlphaZero 5 layers 500 iterations",
+        "GPUS": 8
+    },
+    "gardner_chess_2024-10-05:09h03": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 20 layers gardner",
+        "GPUS": 6
+    },
+    "gardner_chess_2024-10-09:15h32": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 10 layers gardner",
+        "GPUS": 6
+    },
+    "chess_2024-10-16:14h16": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 10 layers 1024 fine-tuned",
+        "GPUS": 6
+    },
+    "chess_2024-10-18:17h59": {
+        "start": 1,
+        "end": 100,
+        "step": 2,
+        "label": "AlphaGateau 10 layers 256 fine-tuned",
+        "GPUS": 6
+    }
+}
