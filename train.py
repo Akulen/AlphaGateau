@@ -5,7 +5,7 @@ import time
 from functools import partial
 import os
 import pickle
-from typing import NamedTuple, Tuple
+from typing import Tuple
 
 from aim import Run
 import chex
@@ -17,27 +17,29 @@ import numpy as np
 import optax
 import pgx
 import rich.progress as rp
-from rich.pretty import pprint
 
 from models import ModelManager, AZNet, EdgeNet, EdgeNet2
 import mcts
-from utils import elo_from_results, to_pgn
+from utils import elo_from_results, to_pgn, Sample
+from utils_progress import resume_task, ProgressEMA, TimeRemainingColumn
 
 jax.config.update("jax_debug_nans", True)
 # jax.config.update("jax_debug_infs", True)
 
 devices = jax.local_devices()
 num_devices = len(devices) # in {1, 6, 8}
-assert 24 % num_devices == 0
+# assert 24 % num_devices == 0
 
 def reduce_multiple(n, m):
-    return int(n / m) * m
+    x = int(n / m) * m
+    assert(x == int(x))
+    return int(x)
 
 config = {
     'add_features': True,
     'attention_pooling': True,
     'dotv2': True,
-    'eval_batch_size': 128, #, # 1024,
+    'eval_batch_size': 32,
     'eval_interval': 2,
     'gardner': False,
     'inner_size': 128,
@@ -50,34 +52,15 @@ config = {
     'new_graph': True,
     'num_simulations': 128,
     'self_edges': True,
-    'selfplay_batch_size': 256, # 1024,
+    'selfplay_batch_size': 256,
+    'shuffle_window': True,
     'simple_update': False,
-    'training_batch_size': 2**8, # 2**10, # 4 096
-    'use_embedding': True,
+    'sync_updates': False,
+    'training_batch_size': 2**7,
+    'use_embedding': False,
     'use_gnn': True,
     'window_size': 1_000_000,
 }
-# config = {
-#     'gardner': False,
-#     'use_gnn': False,
-#     'n_res_layers': 5,
-#     # 'new_graph': True,
-#     # 'mix_edge_node': True,
-#     # 'add_features': True,
-#     # 'use_embedding': True,
-#     # 'attention_pooling': True,
-#     'inner_size': 128,
-#     'n_iter': 100,
-#     'eval_interval': 5,
-#     'eval_batch_size': 128, #, # 1024,
-#     'selfplay_batch_size': 256, # 1024,
-#     'training_batch_size': 2**8, # 2**7, # 2**10, # 4 096
-#     'window_size': 1_000_000,
-#     'n_training_pass': 1,
-#     'max_num_steps': 256,
-#     'num_simulations': 128,
-#     'learning_rate': 0.001,
-# }
 if config['use_gnn'] == False:
     config['use_embedding'] = False
 if config['gardner']:
@@ -92,22 +75,12 @@ config['eval_batch_size'] = reduce_multiple(
 )
 config['selfplay_batch_size'] = reduce_multiple(
     config['selfplay_batch_size'],
-    (num_devices * config['training_batch_size']) // config['max_num_steps']
+    max(1, (num_devices * config['training_batch_size']) // config['max_num_steps'])
 )
 config['window_size'] = reduce_multiple(
     max(config['window_size'], config['selfplay_batch_size'] * config['max_num_steps']),
     config['training_batch_size'] * num_devices
 )
-
-def resume_task(progress: rp.Progress, task_id: rp.TaskID) -> None:
-    with progress._lock:
-        task = progress._tasks[task_id]
-        if task.start_time is None:
-            progress.start_task(task_id)
-        elif task.stop_time is not None:
-            current_time = progress.get_time()
-            task.start_time = task.start_time - task.stop_time + current_time
-            task.stop_time = None
 
 if config['gardner']:
     class BaseLineModel:
@@ -168,31 +141,16 @@ if config['gardner']:
         use_graph=False,
         new_graph=False,
     )
-    baseline_params = jax.tree_map(
+    baseline_params = jax.tree.map(
         partial(jax.device_put_replicated, devices=devices),
         baseline_params
     )
 else:
     env_id = 'chess'
     env = pgx.make(env_id)
-    # with open("./models/chess_2024-02-05:14h08/000390.ckpt", "rb") as f:
     it = 50
     baseline_name = f"chess_2024-02-05:14h08/{it:06}"
     with open(f"./models/{baseline_name}.ckpt", "rb") as f:
-        # dic = {
-        #     "config": config,
-        #     "rng_key": rng_key,
-        #     "params": jax.device_get(params_0),
-        #     "batch_stats": jax.device_get(batch_stats_0),
-        #     "opt_state": jax.device_get(opt_state_0),
-        #     "iteration": iteration,
-        #     "frames": frames,
-        #     "hours": hours,
-        #     "pgx.__version__": pgx.__version__,
-        #     "env_id": env.id,
-        #     "env_version": env.version,
-        #     "R": R,
-        # }
         dic = pickle.load(f)
         baseline_model = ModelManager(
             id=f"Baseline_EdgeNet2_{baseline_name}",
@@ -252,16 +210,6 @@ def selfplay(
     )
 
     return data
-
-
-class Sample(NamedTuple):
-    board: jnp.ndarray
-    obs: jnp.ndarray
-    # board_or_obs: jnp.ndarray
-    lam: jnp.ndarray
-    policy_tgt: jnp.ndarray
-    value_tgt: jnp.ndarray
-    mask: jnp.ndarray
 
 
 @jax.pmap
@@ -392,8 +340,8 @@ def training(
             sub_key,
             jnp.arange(n_data)
         ))
-        sample_window = jax.tree_map(lambda x: x[ixs], sample_window) # shuffle
-        minibatches = jax.tree_map(
+        sample_window = jax.tree.map(lambda x: x[ixs], sample_window) # shuffle
+        minibatches = jax.tree.map(
             lambda x: x.reshape(
                 (
                     num_updates,
@@ -404,7 +352,7 @@ def training(
             sample_window
         )
         for i_batch in range(num_updates):
-            batch = jax.tree_map(lambda x: x[i_batch], minibatches)
+            batch = jax.tree.map(lambda x: x[i_batch], minibatches)
             params, batch_stats, opt_state, policy_loss, value_loss, max_grad =\
                 train(params, batch_stats, opt_state, batch, model)
             policy_losses.append(policy_loss)
@@ -435,7 +383,7 @@ def evaluate(
     R, games = mcts.full_pit(
         env,
         model, params,
-        baseline_model, baseline_params,
+        baseline_model, baseline_params, # type: ignore
         rng_key,
         n_games=n_games,
         max_plies=max_plies,
@@ -454,7 +402,7 @@ def evaluate(
                         g,
                         round=round_name,
                         player0=model.id,
-                        player1=baseline_model.id,
+                        player1=baseline_model.id, # type: ignore
                         result=r_i,
                         gardner=config['gardner'],
                         pgc=pgc
@@ -465,7 +413,6 @@ def evaluate(
         lambda r: ((R == r).sum() / R.size).item(),
         [1, 0, -1]
     )
-    # opt_state = jax.device_put_replicated(opt_state0, devices)
     return R, avg_R, win_rate, draw_rate, lose_rate
 
 
@@ -498,6 +445,7 @@ def main():
                 add_features=config['add_features'],
                 self_edges=config['self_edges'],
                 simple_update=config['simple_update'],
+                sync_updates=config['sync_updates'],
             )
         else:
             model = EdgeNet(
@@ -557,8 +505,8 @@ def main():
 
     rng_key = jax.random.PRNGKey(42)
     if False:
-        pre_train_it = 79
-        pre_train_name = f"gardner_chess_2024-04-22:18h50/{pre_train_it:06}"
+        pre_train_it = 99
+        pre_train_name = f"gardner_chess_2024-10-09:15h32/{pre_train_it:06}"
         config['continue'] = pre_train_name
         with open(f"./models/{pre_train_name}.ckpt", "rb") as f:
             dic = pickle.load(f)
@@ -619,12 +567,15 @@ def main():
     }
     sample_window = None
 
-    with rp.Progress(
-        *rp.Progress.get_default_columns(),
+    with ProgressEMA(
+        rp.TextColumn("[progress.description]{task.description}"),
+        rp.BarColumn(),
+        rp.TaskProgressColumn(),
+        TimeRemainingColumn(exponential_moving_average=True),
         rp.TimeElapsedColumn(),
         rp.MofNCompleteColumn(),
         rp.TextColumn("{task.fields[logs]}"),
-        speed_estimate_period=10000
+        refresh_per_second=1
     ) as progress:
         task_gen = progress.add_task(
             "[cyan]Generating",
@@ -688,6 +639,7 @@ def main():
             if sample_window is None:
                 sample_window = samples
             else:
+                # TODO remove masked frames? policy is still fine
                 sample_window = jax.tree_util.tree_map(
                     lambda x, y:
                         np.concatenate(
@@ -714,7 +666,9 @@ def main():
                 n_steps=config['n_training_pass'],
                 batch_size=config['training_batch_size']
             )
-            sample_window, params, batch_stats, opt_state = data_tuple
+            if config['shuffle_window']:
+                sample_window = data_tuple[0]
+            params, batch_stats, opt_state = data_tuple[1:]
             policy_losses, value_losses, max_grad = losses
             policy_loss = policy_losses.mean().item()
             value_loss = value_losses.mean().item()
@@ -811,6 +765,7 @@ def main():
                         "opt_state": jax.device_get(opt_state_0),
                         "iteration": iteration,
                         "frames": frames,
+                        #"frame_window": sample_window,
                         "hours": hours,
                         "pgx.__version__": pgx.__version__,
                         "env_id": env.id,
@@ -818,6 +773,11 @@ def main():
                         "R": R,
                     }
                     pickle.dump(dic, f)
+                with open(os.path.join(
+                    models_dir,
+                    "frame_window.ckpt",
+                ), "wb") as f:
+                    pickle.dump(sample_window, f)
             et = time.time()
             hours['eval'] += (et - st) / 3600
 
@@ -853,8 +813,6 @@ def main():
 
 
 
-
-# pgx.save_svg_animation(states, f"{env_id}.svg", frame_duration_seconds=0.5)
 
 if __name__ == "__main__":
     main()

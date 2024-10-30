@@ -1,9 +1,25 @@
-from typing import Any, Optional
+from collections import deque
 from dataclasses import dataclass
-import rich.progress as rp
-from rich.text import Text
-from rich.table import Column
 from math import e, ceil
+from rich.table import Column
+from rich.text import Text
+from typing import Any, Optional
+import rich.progress as rp
+
+
+def resume_task(progress: rp.Progress, task_id: rp.TaskID) -> None:
+    with progress._lock:
+        task = progress._tasks[task_id]
+        if task.start_time is None:
+            progress.start_task(task_id)
+        elif task.stop_time is not None:
+            current_time = progress.get_time()
+            delta = current_time - task.stop_time
+            def foo(x):
+                return x._replace(timestamp=x.timestamp + delta)
+            task._progress = deque(map(foo, task._progress))
+            task.start_time = task.start_time + delta
+            task.stop_time = None
 
 class ProgressEMA(rp.Progress):
     def update(
