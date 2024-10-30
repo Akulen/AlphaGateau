@@ -773,11 +773,12 @@ def main():
                         "R": R,
                     }
                     pickle.dump(dic, f)
-                with open(os.path.join(
-                    models_dir,
-                    "frame_window.ckpt",
-                ), "wb") as f:
-                    pickle.dump(sample_window, f)
+                if False: # Generate a file of around 50GB
+                    with open(os.path.join(
+                        models_dir,
+                        "frame_window.ckpt",
+                    ), "wb") as f:
+                        pickle.dump(sample_window, f)
             et = time.time()
             hours['eval'] += (et - st) / 3600
 
