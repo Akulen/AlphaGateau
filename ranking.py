@@ -79,8 +79,6 @@ parser.add_argument(
     help='Guess of the initial Elo rating of the first iteration'
 )
 
-args = parser.parse_args()
-
 devices = jax.local_devices()
 num_devices = len(devices)
 
@@ -100,6 +98,7 @@ def evaluate_model(
     n_games=64,
     n_sim=128,
     elo_guess=1000,
+    elo_average=1000,
     super_task=None
 ):
     # We first assume the model is average
@@ -187,7 +186,7 @@ def evaluate_model(
         data['elo'], data['std'] = compute_elo(
             data['results'],
             wls=True,
-            average=args.elo_average
+            average=elo_average
         )
 
         count = [n_games] * 3
@@ -221,6 +220,8 @@ def evaluate_model(
 
 
 def main():
+    args = parser.parse_args()
+
     env_id = "chess"
     env = pgx.make(env_id)
 
@@ -277,6 +278,7 @@ def main():
                 n_games=args.n_games,
                 n_sim=args.n_sim,
                 elo_guess=prev_elo,
+                elo_average=args.elo_average,
                 super_task=task,
             )
             update_data.append(task_data)
