@@ -567,11 +567,11 @@ def main():
     }
     sample_window = None
 
-    with ProgressEMA(
+    with rp.Progress(
         rp.TextColumn("[progress.description]{task.description}"),
         rp.BarColumn(),
         rp.TaskProgressColumn(),
-        TimeRemainingColumn(exponential_moving_average=True),
+        TimeRemainingColumn(exponential_moving_average=False),
         rp.TimeElapsedColumn(),
         rp.MofNCompleteColumn(),
         rp.TextColumn("{task.fields[logs]}"),

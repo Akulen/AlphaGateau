@@ -126,6 +126,9 @@ def evaluate_model(
         for candidate in data['elo'].keys():
             if candidate in used:
                 continue
+            file_name = f"./models/{candidate.split('/')[0]}/000{candidate.split('/')[1]}.ckpt"
+            if not os.path.isfile(file_name):
+                continue
             cand_dist = abs(
                 data['elo'][candidate] - data['elo'][full_model_name]
             )
@@ -240,11 +243,11 @@ def main():
     if f"{model_name}/{start-step:03}" in data['elo']:
         prev_elo = data['elo'][f"{model_name}/{start-step:03}"]
     update_data = []
-    with ProgressEMA(
+    with rp.Progress(
         rp.TextColumn("[progress.description]{task.description}"),
         rp.BarColumn(),
         rp.TaskProgressColumn(),
-        TimeRemainingColumn(exponential_moving_average=True),
+        TimeRemainingColumn(exponential_moving_average=False),
         rp.TimeElapsedColumn(),
         rp.MofNCompleteColumn(),
         rp.TextColumn("{task.fields[logs]}"),

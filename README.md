@@ -40,7 +40,8 @@ environment variable.
 python ranking.py <model>
 ```
 
-will select 5 opponents for the model run `<model>`, and run matches. Those
+will select 5 opponents for the model run `<model>` (using the matching folder
+name in `models`, e.g. `chess_2024-08-20:00h13`), and run matches. Those
 matches are saved as pgn in `tournaments/ranking matches`, the outcomes
 are saved in `rankings.json`, and estimated ELO ratings are evaluated and
 stored for each player.
@@ -55,3 +56,17 @@ python book.py tournaments/ranking\ matches/ -p="chess_2024-08-20:00h13-499" -o=
 ```
 
 Will return one of the games included in the appendix of the paper.
+
+# Experimental
+
+As the current conda environment is really hard to replicate, a new environment configuration has been added with [pixi](https://pixi.sh/).
+
+It can be run simply using:
+
+```bash
+pixi run train <args>
+pixi run rank <args>
+pixi run book <args>
+```
+
+However, it has not been fully tested yet, and might run into some incompatibility issues using models trained on a previous version of the code against the updated dependencies.
