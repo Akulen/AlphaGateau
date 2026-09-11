@@ -263,12 +263,16 @@ def loss_fn(
         training=True
     )
 
-    policy_loss = optax.softmax_cross_entropy(logits, samples.policy_tgt)
+    policy_loss = optax.safe_softmax_cross_entropy(logits, samples.policy_tgt)
     policy_loss = jnp.mean(policy_loss)
 
+    # Ensure policy target contains no negative values
+    policy_tgt = jnp.maximum(samples.policy_tgt, 0.0)
+    policy_tgt = policy_tgt / jnp.maximum(jnp.sum(policy_tgt, axis=-1, keepdims=True), 1e-12)
+
     policy_loss_norm = optax.kl_divergence(
-        jnp.log(jax.nn.softmax(logits)+1e-40),
-        samples.policy_tgt
+        jax.nn.log_softmax(logits),
+        policy_tgt
     )
     policy_loss_norm = jnp.mean(policy_loss_norm)
 

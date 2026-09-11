@@ -9,9 +9,9 @@ import jax
 import jax.numpy as jnp
 import jraph
 
-from jpyger import state_to_graph
+# from jpyger import state_to_graph
 import chess_graph as cg
-from models_deprecated import EdgeNet
+# from models_deprecated import EdgeNet
 
 
 class AttentionPooling(nn.Module):
@@ -50,7 +50,7 @@ class BNR(nn.Module):
         training: bool=False,
         **kwargs
     ):
-        training=False
+        # training=False
         x = nn.BatchNorm(momentum=self.momentum)(x, use_running_average=not training)
         x = jax.nn.relu(x)
         return x
@@ -428,7 +428,7 @@ class AZNet(nn.Module):
         return logits, v
 
 
-state_to_graph = jax.jit(state_to_graph, static_argnames='use_embedding')
+# state_to_graph = jax.jit(state_to_graph, static_argnames='use_embedding')
 new_state_to_graph = jax.jit(cg.state_to_graph)
 class ModelManager(NamedTuple):
     id: str
@@ -512,6 +512,7 @@ class ModelManager(NamedTuple):
                 return new_state_to_graph(
                     observation, legal_action_mask,
                 )
+            assert False
             return state_to_graph(
                 board, observation, legal_action_mask,
                 use_embedding=self.use_embedding

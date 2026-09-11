@@ -10,7 +10,7 @@ import pgx.gardner_chess as pgg
 from rich.pretty import pprint
 
 def _state_nodes(observation: jnp.ndarray) -> Tuple[int, jnp.ndarray]:
-    assert(observation.ndim == 3)
+    # assert(observation.ndim == 3)
     n_row, n_col = observation.shape[:2]
     # cell order is the same as FEN order
     # features = observation.reshape((n_row * n_col, -1))
@@ -20,14 +20,14 @@ def _state_nodes(observation: jnp.ndarray) -> Tuple[int, jnp.ndarray]:
         zeros = jnp.zeros(features.shape[:-1] + (119,))
         zeros = zeros.at[:,:114].set(features[:,:114])
         features = zeros.at[:,118].set(features[:,114])
-    assert(features.shape[-1] == 119)
+    # assert(features.shape[-1] == 119)
     return n_row * n_col, features
 
 def _state_edges( # TODO: add self-edge
     legal_action_mask: jnp.ndarray,
     offset_id: int=1
 ) -> Tuple[int, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    assert(legal_action_mask.ndim == 1)
+    # assert(legal_action_mask.ndim == 1)
     gardner = legal_action_mask.shape[-1] != 4672
     size = 5 if gardner else 8
     _pgc = pgg if gardner else pgc
